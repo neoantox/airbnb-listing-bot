@@ -1,10 +1,9 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
-import * as R from "ramda";
 import fetch from "node-fetch";
-import {Telegraf} from "telegraf";
+import {Markup, Telegraf} from "telegraf";
+import {InlineKeyboardMarkup} from "telegraf/typings/core/types/typegram";
 import QuerySnapshot = admin.firestore.QuerySnapshot;
-import FieldValue = admin.firestore.FieldValue;
 
 import {Listing, SearchEntry} from "./types";
 import {sleep} from "./utils";
@@ -25,36 +24,26 @@ export const checkListings = functions
     .pubsub.schedule("every 5 minutes")
     .onRun(async () => {
       const snapshot = await firestore.collection("searches").get() as QuerySnapshot<SearchEntry>;
-      const snapshotDocs = snapshot.docs;
 
-      for (const [index, searchSnapshot] of snapshotDocs.entries()) {
+      for (const searchSnapshot of snapshot.docs) {
         const search = searchSnapshot.data();
-        const data = await loadListings(search);
-        const listingIds = data.map((item) => item.id);
         const knownListingIds = search.knownListings ?? [];
-        const newListingIds = R.difference(listingIds, knownListingIds);
-        const newListings = data.filter((item) => newListingIds.includes(item.id));
+        const listings = await loadListings(search);
+        const newListings = listings.filter((item) => !knownListingIds.includes(item.id));
 
-        functions.logger.info(`Total listings: ${listingIds.length}, new listings: ${newListingIds.length}`);
+        functions.logger.info(`Total listings: ${listings.length}, new listings: ${newListings.length}`);
 
-        for (const [listingIndex, listing] of newListings.entries()) {
+        for (const listing of newListings) {
           functions.logger.info(`Processing listing ${listing.id}`, listing);
           await sendTelegramMessage(listing, search);
-
-          if (listingIndex !== newListings.length - 1) { // skip last iteration
-            await sleep(3000);
-          }
+          await sleep(3000);
         }
 
-        if (newListingIds.length > 0) {
-          await searchSnapshot.ref.update({
-            knownListings: FieldValue.arrayUnion(...newListingIds),
-          });
-        }
+        await searchSnapshot.ref.update({
+          knownListings: listings.map((item) => item.id),
+        });
 
-        if (index !== snapshotDocs.length - 1) { // skip last iteration
-          await sleep(15000);
-        }
+        await sleep(15000);
       }
     });
 
@@ -96,8 +85,8 @@ async function loadListings(search: SearchEntry): Promise<Listing[]> {
         imageUrl: item.listing.contextualPictures?.map((picture: any) => picture.picture)?.[0] as string | null,
         rating: item.listing.avgRatingLocalized ?? item.listing.avgRating,
         price: {
-          total: item.pricingQuote.structuredStayDisplayPrice.secondaryLine.priceString,
-          nightly: item.pricingQuote.structuredStayDisplayPrice.primaryLine.priceString,
+          total: item.pricingQuote.structuredStayDisplayPrice.secondaryLine.accessibilityLabel,
+          nightly: item.pricingQuote.structuredStayDisplayPrice.primaryLine.accessibilityLabel,
         },
         rawResponse: item,
       }));
@@ -118,24 +107,31 @@ function getRoomUrl(id: string, search: SearchEntry) {
 }
 
 async function sendTelegramMessage(listing: Listing, search: SearchEntry) {
+  const url = getRoomUrl(listing.id, search);
   const messageLines = [
-    `<b><a href="${getRoomUrl(listing.id, search)}">${listing.name}</a></b>`,
+    `<b><a href="${url}">${listing.name}</a></b>`,
     "",
-    `💰 <b>${listing.price.total} total</b> (${listing.price.nightly} per night)`,
+    `💰 <b>${listing.price.total}</b> (${listing.price.nightly})`,
     `⭐️ ${listing.rating ?? "No rating"}`,
-    "",
-    `ID: ${listing.id}`,
   ];
   const message = messageLines.join("\n");
+
+  const inlineKeyboardMarkup: InlineKeyboardMarkup = {
+    inline_keyboard: [
+      [Markup.button.url("Open in Airbnb", url)],
+    ],
+  };
 
   if (listing.imageUrl) {
     await bot.telegram.sendPhoto(search.chatId, listing.imageUrl, {
       caption: message,
       parse_mode: "HTML",
+      reply_markup: inlineKeyboardMarkup,
     });
   } else {
     await bot.telegram.sendMessage(search.chatId, message, {
       parse_mode: "HTML",
+      reply_markup: inlineKeyboardMarkup,
     });
   }
 }
