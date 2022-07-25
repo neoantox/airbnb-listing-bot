@@ -19,6 +19,7 @@ export const checkListings = functions
     .runWith({
       timeoutSeconds: 540,
       maxInstances: 1,
+      memory: "128MB",
       secrets: ["TELEGRAM_TOKEN", "AIRBNB_API_KEY"],
     })
     .pubsub.schedule("every 5 minutes")
