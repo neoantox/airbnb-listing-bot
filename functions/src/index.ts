@@ -26,7 +26,9 @@ export const checkListings = functions
     .onRun(async () => {
       const snapshot = await firestore.collection("searches").get() as QuerySnapshot<SearchEntry>;
 
-      for (const searchSnapshot of snapshot.docs) {
+      for (const [index, searchSnapshot] of snapshot.docs.entries()) {
+        if (index !== 0) await sleep(15000);
+
         const search = searchSnapshot.data();
         const knownListingIds = search.knownListings ?? [];
         const listings = await loadListings(search);
@@ -34,17 +36,16 @@ export const checkListings = functions
 
         functions.logger.info(`Total listings: ${listings.length}, new listings: ${newListings.length}`);
 
-        for (const listing of newListings) {
+        for (const [i, listing] of newListings.entries()) {
+          if (i !== 0) await sleep(3000);
+
           functions.logger.info(`Processing listing ${listing.id}`, listing);
           await sendTelegramMessage(listing, search);
-          await sleep(3000);
         }
 
         await searchSnapshot.ref.update({
           knownListings: listings.map((item) => item.id),
         });
-
-        await sleep(15000);
       }
     });
 
