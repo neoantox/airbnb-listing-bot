@@ -24,7 +24,9 @@ export const checkListings = functions
     })
     .pubsub.schedule("every 5 minutes")
     .onRun(async () => {
-      const snapshot = await firestore.collection("searches").get() as QuerySnapshot<SearchEntry>;
+      const snapshot = await firestore.collection("searches")
+          .where("active", "==", true)
+          .get() as QuerySnapshot<SearchEntry>;
 
       for (const [index, searchSnapshot] of snapshot.docs.entries()) {
         if (index !== 0) await sleep(15000);
